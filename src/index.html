@@ -1,0 +1,128 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta http-equiv="X-UA-Compatible" content="IE=edge" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta http-equiv="Content-Security-Policy"
+        content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline';" />
+  <title>VisaGuard – Visa &amp; Permit Tracker</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <div class="app-wrapper">
+
+    <!-- ── HEADER ── -->
+    <header class="app-header">
+      <div class="logo">
+        <div class="logo-icon">🛡️</div>
+        <div>
+          <h1>VisaGuard</h1>
+          <p class="subtitle">Visa &amp; Residence Permit Tracker</p>
+        </div>
+      </div>
+      <div class="header-actions">
+        <button class="btn btn-secondary" id="btnCheckNow" type="button" title="Check all expirations now">
+          🔍 Check Now
+        </button>
+      </div>
+    </header>
+
+    <!-- ── MAIN CONTENT ── -->
+    <div class="app-content">
+
+      <!-- ── SIDEBAR: ADD PERSON FORM ── -->
+      <aside class="sidebar">
+        <p class="section-title">Add Person</p>
+
+        <form id="personForm" novalidate>
+          <div class="form-grid">
+
+            <!-- First Name -->
+            <div class="form-group">
+              <label for="firstName">First Name</label>
+              <input type="text" id="firstName" placeholder="e.g. John" required />
+            </div>
+
+            <!-- Last Name -->
+            <div class="form-group">
+              <label for="lastName">Last Name</label>
+              <input type="text" id="lastName" placeholder="e.g. Doe" required />
+            </div>
+
+            <!-- Phone Number -->
+            <div class="form-group full-width">
+              <label for="phoneNumber">Phone Number</label>
+              <input type="tel" id="phoneNumber" placeholder="e.g. +90 555 123 4567" />
+            </div>
+
+            <!-- Document Type -->
+            <div class="form-group full-width">
+              <label for="documentType">Document Type</label>
+              <select id="documentType" required>
+                <option value="">— Select type —</option>
+                <option value="Visa">Visa</option>
+                <option value="Residence Permit">Residence Permit</option>
+              </select>
+            </div>
+
+            <!-- Country -->
+            <div class="form-group full-width">
+              <label for="country">Country</label>
+              <input type="text" id="country" placeholder="e.g. Turkey" required />
+            </div>
+
+            <!-- Expiration Date -->
+            <div class="form-group full-width">
+              <label for="expirationDate">Expiration Date</label>
+              <input type="date" id="expirationDate" required />
+            </div>
+
+          </div><!-- /form-grid -->
+
+          <div style="display:flex; flex-direction:column; gap:10px; margin-top:18px;">
+            <button class="btn btn-primary" type="submit" id="saveBtn">
+              ＋ Save Person
+            </button>
+            <button class="btn btn-secondary" type="button" id="btnTestNotify">
+              🔔 Test Notification
+            </button>
+          </div>
+        </form>
+      </aside>
+
+      <!-- ── MAIN: PERSON LIST ── -->
+      <main class="list-area">
+
+        <!-- Stats bar -->
+        <div class="stats-bar">
+          <div class="stat-card safe">
+            <div class="stat-value" id="statSafe">0</div>
+            <div class="stat-label">Safe</div>
+          </div>
+          <div class="stat-card warn">
+            <div class="stat-value" id="statWarn">0</div>
+            <div class="stat-label">Warning</div>
+          </div>
+          <div class="stat-card danger">
+            <div class="stat-value" id="statExpired">0</div>
+            <div class="stat-label">Expired</div>
+          </div>
+        </div>
+
+        <p class="section-title">Tracked Persons</p>
+
+        <!-- Person list container -->
+        <div id="personList"></div>
+
+      </main>
+    </div><!-- /app-content -->
+
+  </div><!-- /app-wrapper -->
+
+  <!-- Toast container -->
+  <div class="toast-container" id="toastContainer"></div>
+
+  <script src="renderer.js"></script>
+</body>
+</html>

@@ -1,0 +1,55 @@
+{
+  "name": "visa-guard",
+  "version": "1.0.0",
+  "description": "A Windows desktop application to track visa and residence permit expiration dates with automatic notifications.",
+  "main": "main.js",
+  "homepage": "./",
+  "author": "VisaGuard",
+  "license": "MIT",
+  "scripts": {
+    "start": "electron .",
+    "dev": "electron .",
+    "build": "electron-builder",
+    "build-win": "electron-builder --win"
+  },
+  "devDependencies": {
+    "electron": "^40.4.0",
+    "electron-builder": "^24.6.4"
+  },
+  "build": {
+    "appId": "com.visaguard.app",
+    "productName": "VisaGuard",
+    "files": [
+      "main.js",
+      "preload.js",
+      "src/**/*",
+      "assets/**/*"
+    ],
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        },
+        {
+          "target": "portable",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "icon": "assets/icon.png",
+      "certificateFile": null,
+      "certificatePassword": null
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "VisaGuard"
+    }
+  }
+}
