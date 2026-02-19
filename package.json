@@ -32,12 +32,6 @@
           "arch": [
             "x64"
           ]
-        },
-        {
-          "target": "portable",
-          "arch": [
-            "x64"
-          ]
         }
       ],
       "icon": "assets/icon.png",
@@ -51,5 +45,8 @@
       "createStartMenuShortcut": true,
       "shortcutName": "VisaGuard"
     }
+  },
+  "dependencies": {
+    "electron-store": "^8.2.0"
   }
 }

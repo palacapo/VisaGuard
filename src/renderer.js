@@ -1,444 +1,314 @@
 // VisaGuard – Renderer Process
-// Handles person data management, expiration checking, and UI rendering.
-// Runs in a sandboxed context; communicates with main via window.visaGuardAPI
+// All store operations use async IPC via window.visaGuardAPI (electron-store in main)
 
-'use strict';
+(function () {
 
-// ============================================================================
-// CONSTANTS
-// ============================================================================
+  // ============================================================================
+  // STORE HELPERS
+  // ============================================================================
 
-const STORAGE_KEY = 'visaguardPersons';
-const LAST_CHECK_KEY = 'visaguardLastCheckDate';
-
-// ============================================================================
-// STORAGE HELPERS
-// ============================================================================
-
-/** @returns {Person[]} */
-function getPersons() {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    return raw ? JSON.parse(raw) : [];
-  } catch {
-    return [];
-  }
-}
-
-/** @param {Person[]} persons */
-function savePersons(persons) {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(persons));
-}
-
-function getLastCheckDate() {
-  return localStorage.getItem(LAST_CHECK_KEY) || '';
-}
-
-function setLastCheckDate(dateStr) {
-  localStorage.setItem(LAST_CHECK_KEY, dateStr);
-}
-
-// ============================================================================
-// DATE HELPERS
-// ============================================================================
-
-/** Returns today as YYYY-MM-DD */
-function todayString() {
-  return new Date().toISOString().split('T')[0];
-}
-
-/**
- * Calculates the number of whole days between today and expirationDate.
- * Positive = days remaining, negative = days past expiration.
- * @param {string} expirationDate  ISO date string (YYYY-MM-DD)
- * @returns {number}
- */
-function calcDaysLeft(expirationDate) {
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
-
-  const expiry = new Date(expirationDate);
-  expiry.setHours(0, 0, 0, 0);
-
-  const msPerDay = 24 * 60 * 60 * 1000;
-  return Math.ceil((expiry - today) / msPerDay);
-}
-
-/**
- * Format a date string to a human-readable form.
- * @param {string} dateStr
- * @returns {string}
- */
-function formatDate(dateStr) {
-  const d = new Date(dateStr);
-  if (isNaN(d.getTime())) return dateStr;
-  return d.toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' });
-}
-
-/**
- * Returns status class based on days left.
- * @param {number} days
- * @returns {'safe'|'warning'|'expired'}
- */
-function getStatus(days) {
-  if (days < 0) return 'expired';
-  if (days <= 30) return 'warning';
-  return 'safe';
-}
-
-/**
- * Returns a human-readable label for days remaining.
- * @param {number} days
- * @returns {string}
- */
-function getDaysLabel(days) {
-  if (days < 0) return `Expired ${Math.abs(days)}d ago`;
-  if (days === 0) return 'Expires today!';
-  return `${days} day${days !== 1 ? 's' : ''} left`;
-}
-
-// ============================================================================
-// NOTIFICATION HELPERS
-// ============================================================================
-
-/**
- * Send a system notification via the main process.
- * @param {string} title
- * @param {string} body
- */
-function sendNotification(title, body) {
-  if (window.visaGuardAPI?.sendNotification) {
-    window.visaGuardAPI.sendNotification({ title, body });
-  }
-}
-
-/**
- * WhatsApp notification stub – structured for future Twilio integration.
- * Replace the body of this function with actual Twilio API calls when ready.
- * @param {Person} person
- * @param {string} message
- */
-function sendWhatsAppNotification(person, message) {
-  // TODO: Integrate Twilio WhatsApp API
-  // Example Twilio call (requires server-side or main-process proxy):
-  //
-  // const accountSid = 'YOUR_TWILIO_ACCOUNT_SID';
-  // const authToken  = 'YOUR_TWILIO_AUTH_TOKEN';
-  // const from = 'whatsapp:+14155238886'; // Twilio sandbox number
-  // const to   = `whatsapp:${person.phoneNumber}`;
-  //
-  // fetch(`https://api.twilio.com/2010-04-01/Accounts/${accountSid}/Messages.json`, {
-  //   method: 'POST',
-  //   headers: { Authorization: 'Basic ' + btoa(`${accountSid}:${authToken}`) },
-  //   body: new URLSearchParams({ From: from, To: to, Body: message }),
-  // });
-
-  console.log(`[WhatsApp stub] Would send to ${person.phoneNumber}: ${message}`);
-}
-
-// ============================================================================
-// EXPIRATION CHECK LOGIC
-// ============================================================================
-
-/**
- * Check all persons for expiration and send notifications as needed.
- * Uses per-person boolean flags to prevent duplicate notifications.
- * @param {boolean} [force=false]  If true, skip the "once per day" guard.
- */
-function checkExpirations(force = false) {
-  const today = todayString();
-
-  // Once-per-day guard (skip if already checked today, unless forced)
-  if (!force && getLastCheckDate() === today) return;
-
-  const persons = getPersons();
-  let changed = false;
-
-  persons.forEach((person) => {
-    if (!person.expirationDate) return;
-
-    const days = calcDaysLeft(person.expirationDate);
-    const fullName = `${person.firstName} ${person.lastName}`;
-    const docType = person.documentType || 'Document';
-
-    // ── 30-day warning ──────────────────────────────────────────────────────
-    if (days <= 30 && days > 7 && !person.notified30) {
-      sendNotification(
-        'Visa Expiration Warning',
-        `${fullName}'s ${docType} expires in ${days} days (${formatDate(person.expirationDate)}).`
-      );
-      sendWhatsAppNotification(
-        person,
-        `⚠️ VisaGuard: ${fullName}'s ${docType} expires in ${days} days on ${formatDate(person.expirationDate)}.`
-      );
-      person.notified30 = true;
-      changed = true;
-    }
-
-    // ── 7-day warning ───────────────────────────────────────────────────────
-    if (days <= 7 && days > 0 && !person.notified7) {
-      sendNotification(
-        'Visa Expiring Soon',
-        `URGENT: ${fullName}'s ${docType} expires in ${days} day${days !== 1 ? 's' : ''} (${formatDate(person.expirationDate)}).`
-      );
-      sendWhatsAppNotification(
-        person,
-        `🚨 VisaGuard URGENT: ${fullName}'s ${docType} expires in ${days} days on ${formatDate(person.expirationDate)}. Please renew immediately!`
-      );
-      person.notified7 = true;
-      changed = true;
-    }
-
-    // ── Expired ─────────────────────────────────────────────────────────────
-    if (days <= 0 && !person.notifiedExpired) {
-      sendNotification(
-        'Visa Expired',
-        `${fullName}'s ${docType} has expired (${formatDate(person.expirationDate)}).`
-      );
-      sendWhatsAppNotification(
-        person,
-        `❌ VisaGuard: ${fullName}'s ${docType} has EXPIRED on ${formatDate(person.expirationDate)}. Immediate action required!`
-      );
-      person.notifiedExpired = true;
-      changed = true;
-    }
-  });
-
-  if (changed) savePersons(persons);
-  setLastCheckDate(today);
-}
-
-// ============================================================================
-// STATS BAR
-// ============================================================================
-
-function updateStats(persons) {
-  let safe = 0, warn = 0, expired = 0;
-
-  persons.forEach((p) => {
-    if (!p.expirationDate) return;
-    const days = calcDaysLeft(p.expirationDate);
-    const status = getStatus(days);
-    if (status === 'safe') safe++;
-    else if (status === 'warning') warn++;
-    else expired++;
-  });
-
-  const el = (id) => document.getElementById(id);
-  if (el('statSafe')) el('statSafe').textContent = safe;
-  if (el('statWarn')) el('statWarn').textContent = warn;
-  if (el('statExpired')) el('statExpired').textContent = expired;
-}
-
-// ============================================================================
-// RENDER PERSON LIST
-// ============================================================================
-
-function renderPersons() {
-  const container = document.getElementById('personList');
-  if (!container) return;
-
-  const persons = getPersons();
-  updateStats(persons);
-
-  if (persons.length === 0) {
-    container.innerHTML = `
-      <div class="empty-state">
-        <div class="empty-icon">🛡️</div>
-        <p>No persons tracked yet.</p>
-        <small>Fill in the form on the left to add someone.</small>
-      </div>`;
-    return;
+  async function storeGet(key) {
+    return window.visaGuardAPI.storeGet(key);
   }
 
-  const list = document.createElement('div');
-  list.className = 'person-list';
+  async function storeSet(key, value) {
+    return window.visaGuardAPI.storeSet(key, value);
+  }
 
-  persons.forEach((person) => {
-    const days = calcDaysLeft(person.expirationDate);
-    const status = getStatus(days);
-    const label = getDaysLabel(days);
-    const initials = `${(person.firstName || '?')[0]}${(person.lastName || '?')[0]}`.toUpperCase();
+  async function getPersons() {
+    const data = await storeGet('persons');
+    return Array.isArray(data) ? data : [];
+  }
 
-    const card = document.createElement('div');
-    card.className = `person-card status-${status}`;
-    card.innerHTML = `
-      <div class="person-avatar">${initials}</div>
-      <div class="person-info">
-        <div class="person-name">${escapeHtml(person.firstName)} ${escapeHtml(person.lastName)}</div>
-        <div class="person-meta">
-          <span class="meta-tag">📄 ${escapeHtml(person.documentType)}</span>
-          <span class="meta-tag">🌍 ${escapeHtml(person.country)}</span>
-          ${person.phoneNumber ? `<span class="meta-tag">📞 ${escapeHtml(person.phoneNumber)}</span>` : ''}
-        </div>
-      </div>
-      <div class="person-expiry">
-        <div class="expiry-date">Expires ${formatDate(person.expirationDate)}</div>
-        <span class="days-badge ${status}">${label}</span>
-      </div>
-      <button class="btn btn-danger" data-id="${person.id}" type="button" aria-label="Delete">🗑</button>
-    `;
+  async function savePersons(persons) {
+    await storeSet('persons', persons);
+  }
 
-    list.appendChild(card);
-  });
+  async function getLastCheckDate() {
+    const v = await storeGet('lastCheckDate');
+    return v || '';
+  }
 
-  container.innerHTML = '';
-  container.appendChild(list);
+  async function setLastCheckDate(d) {
+    await storeSet('lastCheckDate', d);
+  }
 
-  // Attach delete handlers
-  container.querySelectorAll('[data-id]').forEach((btn) => {
-    btn.addEventListener('click', () => deletePerson(btn.dataset.id));
-  });
-}
+  // ============================================================================
+  // DATE HELPERS
+  // ============================================================================
 
-// ============================================================================
-// CRUD
-// ============================================================================
+  function todayStr() {
+    return new Date().toISOString().split('T')[0];
+  }
 
-/**
- * @typedef {Object} Person
- * @property {string}  id
- * @property {string}  firstName
- * @property {string}  lastName
- * @property {string}  phoneNumber
- * @property {string}  documentType
- * @property {string}  country
- * @property {string}  expirationDate
- * @property {boolean} notified30
- * @property {boolean} notified7
- * @property {boolean} notifiedExpired
- * @property {string}  lastCheckedDate
- */
+  function daysLeft(expDate) {
+    var today = new Date(); today.setHours(0, 0, 0, 0);
+    var exp = new Date(expDate); exp.setHours(0, 0, 0, 0);
+    return Math.ceil((exp - today) / 86400000);
+  }
 
-function addPerson(data) {
-  const persons = getPersons();
-  /** @type {Person} */
-  const person = {
-    id: String(Date.now()),
-    firstName: data.firstName.trim(),
-    lastName: data.lastName.trim(),
-    phoneNumber: data.phoneNumber.trim(),
-    documentType: data.documentType,
-    country: data.country.trim(),
-    expirationDate: data.expirationDate,
-    notified30: false,
-    notified7: false,
-    notifiedExpired: false,
-    lastCheckedDate: '',
-  };
-  persons.push(person);
-  savePersons(persons);
-  renderPersons();
-  // Immediately check this new person (force = true)
-  checkExpirations(true);
-}
+  function fmtDate(d) {
+    var dt = new Date(d);
+    if (isNaN(dt)) return d;
+    return dt.toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' });
+  }
 
-function deletePerson(id) {
-  const persons = getPersons().filter((p) => p.id !== id);
-  savePersons(persons);
-  renderPersons();
-  showToast('Person removed.', 'success');
-}
+  function statusOf(days) {
+    if (days < 0) return 'expired';
+    if (days <= 30) return 'warning';
+    return 'safe';
+  }
 
-// ============================================================================
-// TOAST NOTIFICATIONS (in-app)
-// ============================================================================
+  function daysLabel(days) {
+    if (days < 0) return 'Expired ' + Math.abs(days) + 'd ago';
+    if (days === 0) return 'Expires today!';
+    return days + ' day' + (days !== 1 ? 's' : '') + ' left';
+  }
 
-function showToast(message, type = 'success') {
-  const container = document.getElementById('toastContainer');
-  if (!container) return;
+  function esc(s) {
+    if (typeof s !== 'string') return '';
+    return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;').replace(/'/g, '&#039;');
+  }
 
-  const toast = document.createElement('div');
-  toast.className = `toast ${type}`;
-  toast.textContent = message;
-  container.appendChild(toast);
+  // ============================================================================
+  // NOTIFICATIONS
+  // ============================================================================
 
-  setTimeout(() => {
-    toast.style.opacity = '0';
-    toast.style.transition = 'opacity 0.3s ease';
-    setTimeout(() => toast.remove(), 300);
-  }, 3000);
-}
+  function notify(title, body) {
+    try { window.visaGuardAPI.sendNotification({ title: title, body: body }); } catch (e) { }
+  }
 
-// ============================================================================
-// SECURITY HELPER
-// ============================================================================
+  // ============================================================================
+  // EXPIRATION CHECK
+  // ============================================================================
 
-function escapeHtml(str) {
-  if (typeof str !== 'string') return '';
-  return str
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#039;');
-}
+  async function checkExpirations(force) {
+    var today = todayStr();
+    if (!force) {
+      var last = await getLastCheckDate();
+      if (last === today) return;
+    }
 
-// ============================================================================
-// FORM HANDLING
-// ============================================================================
+    var persons = await getPersons();
+    var changed = false;
 
-document.addEventListener('DOMContentLoaded', () => {
-  const form = document.getElementById('personForm');
-  const btnTestNotify = document.getElementById('btnTestNotify');
-  const btnCheckNow = document.getElementById('btnCheckNow');
+    for (var i = 0; i < persons.length; i++) {
+      var p = persons[i];
+      if (!p.expirationDate) continue;
 
-  // ── Form submit ──────────────────────────────────────────────────────────
-  form.addEventListener('submit', (e) => {
-    e.preventDefault();
+      var days = daysLeft(p.expirationDate);
+      var name = esc(p.firstName) + ' ' + esc(p.lastName);
+      var doc = p.documentType || 'Document';
 
-    const firstName = document.getElementById('firstName').value.trim();
-    const lastName = document.getElementById('lastName').value.trim();
-    const phoneNumber = document.getElementById('phoneNumber').value.trim();
-    const documentType = document.getElementById('documentType').value;
-    const country = document.getElementById('country').value.trim();
-    const expirationDate = document.getElementById('expirationDate').value;
+      if (days <= 30 && days > 7 && !p.notified30) {
+        notify('Visa Expiration Warning',
+          name + '\'s ' + doc + ' expires in ' + days + ' days (' + fmtDate(p.expirationDate) + ').');
+        p.notified30 = true; changed = true;
+      }
+      if (days <= 7 && days > 0 && !p.notified7) {
+        notify('Visa Expiring Soon',
+          'URGENT: ' + name + '\'s ' + doc + ' expires in ' + days + ' day' + (days !== 1 ? 's' : '') + '.');
+        p.notified7 = true; changed = true;
+      }
+      if (days <= 0 && !p.notifiedExpired) {
+        notify('Visa Expired',
+          name + '\'s ' + doc + ' has expired (' + fmtDate(p.expirationDate) + ').');
+        p.notifiedExpired = true; changed = true;
+      }
+    }
 
-    if (!firstName || !lastName || !documentType || !country || !expirationDate) {
-      showToast('Please fill in all required fields.', 'error');
+    if (changed) await savePersons(persons);
+    await setLastCheckDate(today);
+  }
+
+  // ============================================================================
+  // STATS
+  // ============================================================================
+
+  function updateStats(persons) {
+    var safe = 0, warn = 0, exp = 0;
+    for (var i = 0; i < persons.length; i++) {
+      if (!persons[i].expirationDate) continue;
+      var s = statusOf(daysLeft(persons[i].expirationDate));
+      if (s === 'safe') safe++; else if (s === 'warning') warn++; else exp++;
+    }
+    var elSafe = document.getElementById('statSafe');
+    var elWarn = document.getElementById('statWarn');
+    var elExp = document.getElementById('statExpired');
+    if (elSafe) elSafe.textContent = safe;
+    if (elWarn) elWarn.textContent = warn;
+    if (elExp) elExp.textContent = exp;
+  }
+
+  // ============================================================================
+  // RENDER
+  // ============================================================================
+
+  async function renderPersons() {
+    var container = document.getElementById('personList');
+    if (!container) return;
+
+    var persons = await getPersons();
+    updateStats(persons);
+
+    if (persons.length === 0) {
+      container.innerHTML = '<div class="empty-state"><div class="empty-icon">\uD83D\uDEE1\uFE0F</div>' +
+        '<p>No persons tracked yet.</p><small>Fill in the form on the left to add someone.</small></div>';
       return;
     }
 
-    addPerson({ firstName, lastName, phoneNumber, documentType, country, expirationDate });
-    form.reset();
-    showToast(`${firstName} ${lastName} added successfully.`, 'success');
+    var html = '<div class="person-list">';
+    for (var i = 0; i < persons.length; i++) {
+      var p = persons[i];
+      var days = daysLeft(p.expirationDate);
+      var status = statusOf(days);
+      var label = daysLabel(days);
+      var init = ((p.firstName || '?')[0] + (p.lastName || '?')[0]).toUpperCase();
+
+      html += '<div class="person-card status-' + status + '">' +
+        '<div class="person-avatar">' + esc(init) + '</div>' +
+        '<div class="person-info">' +
+        '<div class="person-name">' + esc(p.firstName) + ' ' + esc(p.lastName) + '</div>' +
+        '<div class="person-meta">' +
+        '<span class="meta-tag">\uD83D\uDCC4 ' + esc(p.documentType) + '</span>' +
+        '<span class="meta-tag">\uD83C\uDF0D ' + esc(p.country) + '</span>' +
+        (p.phoneNumber ? '<span class="meta-tag">\uD83D\uDCDE ' + esc(p.phoneNumber) + '</span>' : '') +
+        '</div>' +
+        '</div>' +
+        '<div class="person-expiry">' +
+        '<div class="expiry-date">Expires ' + fmtDate(p.expirationDate) + '</div>' +
+        '<span class="days-badge ' + status + '">' + label + '</span>' +
+        '</div>' +
+        '<button class="btn btn-danger delete-btn" data-id="' + esc(p.id) + '" type="button">&#x1F5D1;</button>' +
+        '</div>';
+    }
+    html += '</div>';
+
+    container.innerHTML = html;
+
+    var btns = container.querySelectorAll('.delete-btn');
+    for (var j = 0; j < btns.length; j++) {
+      btns[j].addEventListener('click', (function (id) {
+        return function () { deletePerson(id); };
+      })(btns[j].dataset.id));
+    }
+  }
+
+  // ============================================================================
+  // CRUD
+  // ============================================================================
+
+  async function addPerson(data) {
+    var persons = await getPersons();
+    persons.push({
+      id: String(Date.now()),
+      firstName: data.firstName,
+      lastName: data.lastName,
+      phoneNumber: data.phoneNumber,
+      documentType: data.documentType,
+      country: data.country,
+      expirationDate: data.expirationDate,
+      notified30: false,
+      notified7: false,
+      notifiedExpired: false
+    });
+    await savePersons(persons);
+    await renderPersons();
+    await checkExpirations(true);
+  }
+
+  async function deletePerson(id) {
+    var persons = await getPersons();
+    persons = persons.filter(function (p) { return p.id !== id; });
+    await savePersons(persons);
+    await renderPersons();
+    showToast('Person removed.', 'success');
+  }
+
+  // ============================================================================
+  // TOAST
+  // ============================================================================
+
+  function showToast(msg, type) {
+    var container = document.getElementById('toastContainer');
+    if (!container) return;
+    var t = document.createElement('div');
+    t.className = 'toast ' + (type || 'success');
+    t.textContent = msg;
+    container.appendChild(t);
+    setTimeout(function () {
+      t.style.opacity = '0';
+      t.style.transition = 'opacity 0.3s ease';
+      setTimeout(function () { t.remove(); }, 300);
+    }, 3000);
+  }
+
+  // ============================================================================
+  // INIT
+  // ============================================================================
+
+  document.addEventListener('DOMContentLoaded', function () {
+    var form = document.getElementById('personForm');
+    var btnTestNotify = document.getElementById('btnTestNotify');
+    var btnCheckNow = document.getElementById('btnCheckNow');
+
+    form.addEventListener('submit', function (e) {
+      e.preventDefault();
+      var firstName = (document.getElementById('firstName').value || '').trim();
+      var lastName = (document.getElementById('lastName').value || '').trim();
+      var phoneNumber = (document.getElementById('phoneNumber').value || '').trim();
+      var documentType = document.getElementById('documentType').value;
+      var country = (document.getElementById('country').value || '').trim();
+      var expirationDate = document.getElementById('expirationDate').value;
+
+      if (!firstName || !lastName || !documentType || !country || !expirationDate) {
+        showToast('Please fill in all required fields.', 'error');
+        return;
+      }
+
+      addPerson({
+        firstName: firstName, lastName: lastName, phoneNumber: phoneNumber,
+        documentType: documentType, country: country, expirationDate: expirationDate
+      })
+        .then(function () {
+          form.reset();
+          showToast(firstName + ' ' + lastName + ' added successfully.', 'success');
+        });
+    });
+
+    if (btnTestNotify) {
+      btnTestNotify.addEventListener('click', function () {
+        notify('VisaGuard', 'Notification system is working correctly!');
+        showToast('Test notification sent.', 'success');
+      });
+    }
+
+    if (btnCheckNow) {
+      btnCheckNow.addEventListener('click', function () {
+        checkExpirations(true).then(function () {
+          showToast('Expiration check complete.', 'success');
+        });
+      });
+    }
+
+    // Initial load
+    renderPersons().then(function () {
+      checkExpirations(false);
+    });
+
+    // IPC listeners from main process
+    if (window.visaGuardAPI && window.visaGuardAPI.on) {
+      window.visaGuardAPI.on('check-expirations-now', function () {
+        checkExpirations(true).then(function () { showToast('Check complete.', 'success'); });
+      });
+      window.visaGuardAPI.on('check-expirations-startup', function () {
+        checkExpirations(false);
+      });
+      window.visaGuardAPI.on('check-expirations-scheduled', function () {
+        checkExpirations(false);
+      });
+    }
   });
 
-  // ── Test notification ────────────────────────────────────────────────────
-  btnTestNotify.addEventListener('click', () => {
-    sendNotification('VisaGuard', '✅ Notification system is working correctly!');
-    showToast('Test notification sent.', 'success');
-  });
-
-  // ── Manual check now ─────────────────────────────────────────────────────
-  btnCheckNow.addEventListener('click', () => {
-    checkExpirations(true); // force = true → bypass once-per-day guard
-    showToast('Expiration check complete.', 'success');
-  });
-
-  // ── Initial render ───────────────────────────────────────────────────────
-  renderPersons();
-  checkExpirations(false);
-});
-
-// ============================================================================
-// IPC LISTENERS (from main process via preload contextBridge)
-// ============================================================================
-
-if (window.visaGuardAPI) {
-  // Tray → "Check Expirations Now"
-  window.visaGuardAPI.on('check-expirations-now', () => {
-    checkExpirations(true);
-    showToast('Expiration check complete.', 'success');
-  });
-
-  // App startup check
-  window.visaGuardAPI.on('check-expirations-startup', () => {
-    checkExpirations(false);
-  });
-
-  // Daily scheduled check (every 24 hours from main process)
-  window.visaGuardAPI.on('check-expirations-scheduled', () => {
-    checkExpirations(false);
-  });
-}
+})(); // end IIFE

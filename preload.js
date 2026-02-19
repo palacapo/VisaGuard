@@ -4,7 +4,6 @@
 
 const { contextBridge, ipcRenderer } = require('electron');
 
-// Allowed IPC channels the renderer may listen on
 const ALLOWED_RECEIVE_CHANNELS = [
   'check-expirations-now',
   'check-expirations-startup',
@@ -12,10 +11,7 @@ const ALLOWED_RECEIVE_CHANNELS = [
 ];
 
 contextBridge.exposeInMainWorld('visaGuardAPI', {
-  /**
-   * Send a system notification via the main process.
-   * @param {{ title: string, body: string }} options
-   */
+  // ── Notifications ──────────────────────────────────────────────────────────
   sendNotification: ({ title, body }) => {
     if (typeof body !== 'string' || body.trim().length === 0) return;
     ipcRenderer.send('send-notification', {
@@ -24,25 +20,37 @@ contextBridge.exposeInMainWorld('visaGuardAPI', {
     });
   },
 
+  // ── Persistent Store (electron-store via IPC) ───────────────────────────────
   /**
-   * Register a listener on an allowed IPC channel.
-   * @param {string} channel
-   * @param {Function} callback  receives (...args) from ipcRenderer.on
+   * Get a value from the persistent store.
+   * @param {string} key
+   * @returns {Promise<any>}
    */
+  storeGet: (key) => ipcRenderer.invoke('store-get', key),
+
+  /**
+   * Set a value in the persistent store.
+   * @param {string} key
+   * @param {any} value
+   * @returns {Promise<void>}
+   */
+  storeSet: (key, value) => ipcRenderer.invoke('store-set', key, value),
+
+  /**
+   * Delete a key from the persistent store.
+   * @param {string} key
+   * @returns {Promise<void>}
+   */
+  storeDelete: (key) => ipcRenderer.invoke('store-delete', key),
+
+  // ── IPC Event Listeners ────────────────────────────────────────────────────
   on: (channel, callback) => {
     if (!ALLOWED_RECEIVE_CHANNELS.includes(channel)) return;
-    // Wrap to avoid exposing the raw event object to the renderer
     const wrapped = (_event, ...args) => callback(...args);
     ipcRenderer.on(channel, wrapped);
-    // Return a cleanup function
     return () => ipcRenderer.removeListener(channel, wrapped);
   },
 
-  /**
-   * Register a one-time listener on an allowed IPC channel.
-   * @param {string} channel
-   * @param {Function} callback
-   */
   once: (channel, callback) => {
     if (!ALLOWED_RECEIVE_CHANNELS.includes(channel)) return;
     ipcRenderer.once(channel, (_event, ...args) => callback(...args));
