@@ -26,7 +26,8 @@ function readStore() {
     if (!fs.existsSync(filePath)) return {};
     const raw = fs.readFileSync(filePath, 'utf-8');
     return JSON.parse(raw);
-  } catch {
+  } catch (err) {
+    console.error('[VisaGuard] readStore error:', err);
     return {};
   }
 }
@@ -37,8 +38,31 @@ function writeStore(data) {
     const dir = path.dirname(filePath);
     if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
     fs.writeFileSync(filePath, JSON.stringify(data, null, 2), 'utf-8');
+    return true;
   } catch (err) {
-    console.error('[VisaGuard] Failed to write store:', err);
+    console.error('[VisaGuard] writeStore error:', err);
+    return false;
+  }
+}
+
+// Self-test: verify the store can actually write and read back
+function selfTestStore() {
+  try {
+    const testKey = '__vg_selftest__';
+    const testVal = 'ok_' + Date.now();
+    const data = readStore();
+    data[testKey] = testVal;
+    const writeOk = writeStore(data);
+    if (!writeOk) return { ok: false, reason: 'Write failed (fs error)' };
+    const data2 = readStore();
+    if (data2[testKey] !== testVal) return { ok: false, reason: 'Read-back mismatch' };
+    // Clean up test key
+    delete data2[testKey];
+    writeStore(data2);
+    console.log('[VisaGuard] Store self-test PASSED. Path:', getDataFilePath());
+    return { ok: true, path: getDataFilePath() };
+  } catch (err) {
+    return { ok: false, reason: String(err) };
   }
 }
 
@@ -74,7 +98,7 @@ function createWindow() {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
       nodeIntegration: false,
-      sandbox: true,
+      sandbox: false,
       enableRemoteModule: false,
     },
   });
@@ -182,18 +206,23 @@ function createTray() {
 // Get a value by key
 ipcMain.handle('store-get', (_event, key) => {
   const data = readStore();
-  return key in data ? data[key] : null;
+  const val = key in data ? data[key] : null;
+  console.log(`[VisaGuard] store-get "${key}" =>`, JSON.stringify(val)?.slice(0, 80));
+  return val;
 });
 
 // Set a value by key
 ipcMain.handle('store-set', (_event, key, value) => {
+  console.log(`[VisaGuard] store-set "${key}" (${Array.isArray(value) ? value.length + ' items' : typeof value})`);
   const data = readStore();
   data[key] = value;
   writeStore(data);
+  console.log(`[VisaGuard] store-set done, file: ${getDataFilePath()}`);
 });
 
 // Delete a key
 ipcMain.handle('store-delete', (_event, key) => {
+  console.log(`[VisaGuard] store-delete "${key}"`);
   const data = readStore();
   delete data[key];
   writeStore(data);
@@ -242,6 +271,11 @@ function stopScheduler() {
 // APP LIFECYCLE
 // ============================================================================
 
+// Store status IPC – renderer can query this
+ipcMain.handle('store-get-status', () => {
+  return selfTestStore();
+});
+
 app.on('ready', () => {
   createWindow();
   createMenu();
@@ -249,11 +283,14 @@ app.on('ready', () => {
   startScheduler();
 
   mainWindow.webContents.once('did-finish-load', () => {
+    // Run self-test and send result to renderer
+    const testResult = selfTestStore();
     setTimeout(() => {
       if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send('store-status', testResult);
         mainWindow.webContents.send('check-expirations-startup');
       }
-    }, 1500);
+    }, 1000);
   });
 });
 

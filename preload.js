@@ -8,6 +8,7 @@ const ALLOWED_RECEIVE_CHANNELS = [
   'check-expirations-now',
   'check-expirations-startup',
   'check-expirations-scheduled',
+  'store-status',
 ];
 
 contextBridge.exposeInMainWorld('visaGuardAPI', {
@@ -42,6 +43,12 @@ contextBridge.exposeInMainWorld('visaGuardAPI', {
    * @returns {Promise<void>}
    */
   storeDelete: (key) => ipcRenderer.invoke('store-delete', key),
+
+  /**
+   * Run a store self-test and return { ok, path?, reason? }
+   * @returns {Promise<{ok: boolean, path?: string, reason?: string}>}
+   */
+  storeGetStatus: () => ipcRenderer.invoke('store-get-status'),
 
   // ── IPC Event Listeners ────────────────────────────────────────────────────
   on: (channel, callback) => {

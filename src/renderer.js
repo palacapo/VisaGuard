@@ -8,11 +8,22 @@
   // ============================================================================
 
   async function storeGet(key) {
-    return window.visaGuardAPI.storeGet(key);
+    try {
+      return await window.visaGuardAPI.storeGet(key);
+    } catch (e) {
+      showToast('⚠️ Storage read error: ' + e.message, 'error');
+      console.error('[VisaGuard] storeGet failed:', e);
+      return null;
+    }
   }
 
   async function storeSet(key, value) {
-    return window.visaGuardAPI.storeSet(key, value);
+    try {
+      await window.visaGuardAPI.storeSet(key, value);
+    } catch (e) {
+      showToast('⚠️ Storage write error — data may not be saved!', 'error');
+      console.error('[VisaGuard] storeSet failed:', e);
+    }
   }
 
   async function getPersons() {
@@ -247,8 +258,15 @@
   // ============================================================================
   // INIT
   // ============================================================================
-
   document.addEventListener('DOMContentLoaded', function () {
+    // ── Verify the API bridge is available ─────────────────────────────────
+    if (!window.visaGuardAPI) {
+      document.body.insertAdjacentHTML('afterbegin',
+        '<div style="background:#dc2626;color:#fff;padding:12px 20px;font-weight:bold;text-align:center;z-index:9999;position:fixed;top:0;left:0;right:0">' +
+        '⛔ Critical error: Storage API is unavailable. Data will NOT be saved. Please reinstall VisaGuard.</div>');
+      return;
+    }
+
     var form = document.getElementById('personForm');
     var btnTestNotify = document.getElementById('btnTestNotify');
     var btnCheckNow = document.getElementById('btnCheckNow');
@@ -299,6 +317,19 @@
 
     // IPC listeners from main process
     if (window.visaGuardAPI && window.visaGuardAPI.on) {
+      // ── Store status: show error banner if store is broken ────────────────
+      window.visaGuardAPI.on('store-status', function (result) {
+        if (!result || !result.ok) {
+          var reason = (result && result.reason) ? result.reason : 'Unknown error';
+          document.body.insertAdjacentHTML('afterbegin',
+            '<div id="storeBanner" style="background:#dc2626;color:#fff;padding:12px 20px;font-weight:bold;text-align:center;z-index:9999;position:fixed;top:0;left:0;right:0">' +
+            '⛔ Storage error: ' + reason + '. Data will NOT persist. Please contact support.</div>');
+          console.error('[VisaGuard] Store self-test FAILED:', reason);
+        } else {
+          console.log('[VisaGuard] Store OK, path:', result.path);
+        }
+      });
+
       window.visaGuardAPI.on('check-expirations-now', function () {
         checkExpirations(true).then(function () { showToast('Check complete.', 'success'); });
       });
@@ -312,3 +343,4 @@
   });
 
 })(); // end IIFE
+
